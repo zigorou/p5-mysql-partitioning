@@ -15,7 +15,8 @@ my @COLUMNS = qw/PARTITION_NAME SUBPARTITION_NAME PARTITION_ORDINAL_POSITION
               PARTITION_COMMENT NODEGROUP TABLESPACE_NAME/;
 
 __PACKAGE__->mk_accessors(
-    qw/manager/, ( map { lc } @COLUMNS ),
+    qw/manager/,
+    ( map { lc } @COLUMNS ),
 );
 
 sub new {

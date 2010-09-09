@@ -10,13 +10,20 @@ inc/Module/Install/Metadata.pm
 inc/Module/Install/Repository.pm
 inc/Module/Install/Win32.pm
 inc/Module/Install/WriteAll.pm
+inc/SQL/SplitStatement.pm
+inc/Test/Exception.pm
+inc/Test/LoadAllModules.pm
 inc/Test/More.pm
+inc/Test/Requires.pm
+inc/Test/Skip/UnlessExistsExecutable.pm
 lib/MySQL/Partitioning.pm
+lib/MySQL/Partitioning/Partition.pm
 Makefile.PL
 MANIFEST			This list of files
 META.yml
 README
 t/00_compile.t
+t/compile.t
 xt/01_podspell.t
 xt/02_perlcritic.t
 xt/03_pod.t
