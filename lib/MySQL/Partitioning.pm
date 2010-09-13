@@ -3,7 +3,7 @@ package MySQL::Partitioning;
 use strict;
 use warnings;
 use parent qw(Class::Accessor::Fast);
-use Data::Util qw(is_array_ref is_hash_ref is_scalar_ref);
+use Data::Util qw(is_array_ref is_hash_ref is_scalar_ref is_number is_integer);
 use DBI qw(:sql_types);
 use Carp;
 use File::Which qw(which);
@@ -20,7 +20,8 @@ my @COLUMNS = qw/PARTITION_NAME SUBPARTITION_NAME PARTITION_ORDINAL_POSITION
   PARTITION_COMMENT NODEGROUP TABLESPACE_NAME/;
 
 __PACKAGE__->mk_accessors(
-    qw/dbh sql host database user credentical table mysqldump partitions partitions_map/);
+    qw/dbh sql host database user credentical table mysqldump partitions partitions_map/
+);
 
 sub new {
     my ( $class, %args ) = @_;
@@ -40,7 +41,7 @@ sub new {
     }
 
     $args{partitions_map} = +{};
-    $args{partitions} = [];
+    $args{partitions}     = [];
     $args{sql} ||= SQL::Abstract::Limit->new( limit_dialect => $args{dbh} );
 
     my $self = $class->SUPER::new( \%args );
@@ -81,7 +82,7 @@ sub load {
         );
 
         my $partition = MySQL::Partitioning::Partition->new(%new_args);
-	push(@partitions, $partition);
+        push( @partitions, $partition );
 
         if ( defined $partition->subpartition_name ) {
             $partitions_map{ $partition->partition_name } ||= +{};
@@ -126,15 +127,16 @@ sub get_partition {
 sub add_partition {
     my ( $self, %args ) = @_;
     my $dbh = $self->dbh;
-    my ( $stmt, @bind ) = $self->_add_partition_sql;
+    my ( $stmt, @bind ) = $self->_add_partition_sql(%args);
 
     try {
-        my $sth = $dbh->prepare($stmt);
-        my $i   = 1;
+        my $sth = $dbh->prepare($stmt) or croak( $dbh->errstr );
+        my $i = 1;
         for (@bind) {
-            $sth->bind_param( $i++, @$_ );
+            $sth->bind_param( $i++, @$_ ) or croak( $sth->errstr );
         }
-        $sth->execute;
+
+        $sth->execute or croak( $sth->errstr );
     }
     catch {
         my $e = $_;
@@ -147,14 +149,18 @@ sub add_partition {
 sub drop_partition {
     my ( $self, $partition_name ) = @_;
     my $dbh = $self->dbh;
-    my $stmt = 'ALTER TABLE ' . $dbh->quote_identifier($self->table) . ' DROP PARTITION ' . $partition_name;
+    my $stmt =
+        'ALTER TABLE '
+      . $dbh->quote_identifier( $self->table )
+      . ' DROP PARTITION '
+      . $partition_name;
 
     try {
-	$dbh->do( $stmt );
+        $dbh->do($stmt);
     }
     catch {
-	my $e = $_;
-	croak $e;
+        my $e = $_;
+        croak $e;
     };
 
     return 1;
@@ -166,9 +172,9 @@ sub _add_partition_sql {
     my ( $stmt, @bind );
 
     $stmt =
-        'ALTER TABLE ADD PARTITION '
+        'ALTER TABLE '
       . $dbh->quote_identifier( $self->table )
-      . ' ( PARTITION '
+      . ' ADD PARTITION ( PARTITION '
       . $args{partition_name} . ' ';
 
     my $values = $args{values};
@@ -180,21 +186,30 @@ sub _add_partition_sql {
         push( @bind, map { [ $_, SQL_INTEGER ] } @{$values} );
     }
     elsif ( is_scalar_ref($values) ) {
-        $values = $$values;
-        if ( is_array_ref $values ) {
+        my $values_ref = $$values;
+        if ( is_array_ref $values_ref ) {
+	    my @values = @$values_ref;
             ### \[ TO_DAYS(?), '2010-05-08 00:00:00' ]
-            $stmt .= sprintf( 'VALUES LESS THAN (%s) ', shift @$values );
-            push( @bind,
-                map { [ $_, is_integer($_) ? SQL_INTEGER : SQL_FLOAT ] }
-                  @{$values} );
+            $stmt .= sprintf( 'VALUES LESS THAN (%s) ', shift @values );
+            push(
+                @bind,
+                map {
+                    [
+                        $_,
+                        is_integer($_)
+                        ? SQL_INTEGER
+                        : ( is_number($_) ? SQL_FLOAT : SQL_VARCHAR )
+                    ]
+                  } @values
+            );
         }
         else {
             ### \'MAXVALUE'
-            $stmt .= sprintf( 'VALUES LESS THAN %s ', $values );
+            $stmt .= sprintf( 'VALUES LESS THAN %s ', $values_ref );
         }
     }
     else {
-        $stmt .= 'VALUES LESS THAN (?)';
+        $stmt .= 'VALUES LESS THAN (?) ';
         push(
             @bind,
             [
@@ -207,6 +222,8 @@ sub _add_partition_sql {
     }
 
     $self->_add_statement( \$stmt, 'ENGINE', $args{engine} );
+    $self->_add_statement_and_bind( \$stmt, \@bind, 'COMMENT', $args{comment},
+        SQL_VARCHAR );
     $self->_add_statement_and_bind( \$stmt, \@bind, 'DATA DIRECTORY',
         $args{data_directory}, SQL_VARCHAR );
     $self->_add_statement_and_bind( \$stmt, \@bind, 'INDEX DIRECTORY',
@@ -216,7 +233,8 @@ sub _add_partition_sql {
     $self->_add_statement_and_bind( \$stmt, \@bind, 'MIN_ROWS', $args{min_rows},
         SQL_INTEGER );
     $self->_add_statement( \$stmt, 'TABLESPACE',
-        '( ' . $args{tablespace_name} . ' )' );
+        '( ' . $args{tablespace_name} . ' )' )
+      if ( defined $args{tablespace_name} );
     $self->_add_statement( \$stmt, 'NODEGROUP', $args{node_group_id} );
 
     if ( is_array_ref $args{subpartitions} ) {
